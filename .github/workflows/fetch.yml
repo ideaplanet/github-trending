@@ -15,7 +15,7 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
       - uses: oven-sh/setup-bun@v2
@@ -31,7 +31,7 @@ jobs:
       - name: Commit & push if changed
         run: |
           git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "bot@github.com"
           if git diff --quiet -- data/trending.db; then
             echo "::warning::data/trending.db unchanged after fetch"
             exit 0
