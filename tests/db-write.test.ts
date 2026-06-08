@@ -148,3 +148,48 @@ describe('writeBatch — atomic on partial failure', () => {
     expect(after).toEqual(before);
   });
 });
+
+describe('writeBatch — partial periods do not flip is_latest', () => {
+  test('empty period does not mark existing latest rows stale', () => {
+    // 先写全部三个 period 的完整快照
+    const t1 = Date.UTC(2026, 5, 8, 12, 0, 0) / 1000;
+    writeBatch(db, {
+      now: t1,
+      parsed: {
+        daily: [row({ rank: 1 })],
+        weekly: [row({ rank: 1 })],
+        monthly: [row({ rank: 1 })],
+      },
+    });
+
+    // 模拟 `fetch --periods daily`:只传 daily,weekly/monthly 为空
+    const t2 = t1 + 3600;
+    writeBatch(db, {
+      now: t2,
+      parsed: {
+        daily: [row({ rank: 2 })],
+        weekly: [],
+        monthly: [],
+      },
+    });
+
+    // weekly 和 monthly 的 is_latest 必须保留为 true,不能被空数组的副作用翻成 false
+    const weeklyLatest = db
+      .select()
+      .from(repoTrending)
+      .where(
+        and(eq(repoTrending.period, 'weekly'), eq(repoTrending.is_latest, true)),
+      )
+      .all();
+    expect(weeklyLatest.length).toBe(1);
+
+    const monthlyLatest = db
+      .select()
+      .from(repoTrending)
+      .where(
+        and(eq(repoTrending.period, 'monthly'), eq(repoTrending.is_latest, true)),
+      )
+      .all();
+    expect(monthlyLatest.length).toBe(1);
+  });
+});

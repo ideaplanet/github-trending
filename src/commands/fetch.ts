@@ -26,6 +26,10 @@ export function writeBatch(db: DB, batch: BatchInput): void {
   db.transaction((tx) => {
     for (const period of PERIODS) {
       const rows = parsed[period];
+      // 如果调用方没传该 period 的数据(如 `fetch --periods daily`),
+      // 不能把已经存在的 is_latest 翻成 0 — 否则下次 `latest --period weekly`
+      // 会显示 "no data yet"。空数组 = 这次没抓 = 不动旧数据。
+      if (rows.length === 0) continue;
       const periodDate = computePeriodDate(period, now);
 
       tx.update(repoTrending)
