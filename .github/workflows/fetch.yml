@@ -1,0 +1,41 @@
+name: fetch
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: fetch-db
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      # 抓取前先验证;解析坏了直接红,不污染 db。
+      - run: bun run typecheck
+      - run: bun test
+
+      - run: bun run db:migrate
+      - run: bun src/cli.ts fetch
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- data/trending.db; then
+            echo "::warning::data/trending.db unchanged after fetch"
+            exit 0
+          fi
+          git add data/trending.db
+          git commit -m "chore(data): trending snapshot $(date -u +%FT%TZ)"
+          git push
