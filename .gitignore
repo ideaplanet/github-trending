@@ -1,0 +1,8 @@
+node_modules/
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.DS_Store
+# 临时调试 db,不要把它提交;真正的 data/trending.db 仍要提交
+*.local.db
