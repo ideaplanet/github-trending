@@ -145,3 +145,83 @@ function readSiblingNumber(
   }
   return -1;
 }
+
+const PERIOD_URL: Record<Period, string> = {
+  daily: 'https://github.com/trending?since=daily',
+  weekly: 'https://github.com/trending?since=weekly',
+  monthly: 'https://github.com/trending?since=monthly',
+};
+
+class HttpRetryable extends Error {
+  constructor(public readonly status: number) {
+    super(`HTTP ${status}`);
+    this.name = 'HttpRetryable';
+  }
+}
+class HttpFatal extends Error {
+  constructor(public readonly status: number) {
+    super(`HTTP ${status}`);
+    this.name = 'HttpFatal';
+  }
+}
+
+export type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
+
+interface FetchOpts {
+  tries?: number;
+  baseMs?: number;
+  timeoutMs?: number;
+  fetchImpl?: FetchImpl;
+}
+
+export async function fetchTrendingHtml(
+  period: Period,
+  opts: FetchOpts = {},
+): Promise<string> {
+  const tries = opts.tries ?? 3;
+  const baseMs = opts.baseMs ?? 1500;
+  const timeoutMs = opts.timeoutMs ?? 15_000;
+  const f: FetchImpl = opts.fetchImpl ?? (globalThis.fetch as FetchImpl);
+  const url = PERIOD_URL[period];
+
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const res = await f(url, {
+        signal: ctl.signal,
+        headers: { 'User-Agent': 'github-trending-tracker' },
+      });
+      clearTimeout(timer);
+      if (res.status === 429 || res.status >= 500) {
+        throw new HttpRetryable(res.status);
+      }
+      if (!res.ok) throw new HttpFatal(res.status);
+      return await res.text();
+    } catch (e) {
+      clearTimeout(timer);
+      lastErr = e;
+      if (e instanceof HttpFatal) throw e;
+      const retryable =
+        e instanceof HttpRetryable ||
+        (e instanceof Error &&
+          (e.name === 'AbortError' || e.message.includes('fetch')));
+      if (i === tries - 1 || !retryable) throw e;
+      await sleep(baseMs * 2 ** i);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('fetchTrendingHtml: unknown');
+}
+
+export async function scrapeTrending(
+  period: Period,
+  opts: FetchOpts = {},
+): Promise<ParsedRow[]> {
+  const html = await fetchTrendingHtml(period, opts);
+  return parseTrendingHtml(period, html);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
