@@ -1,7 +1,10 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { and, eq, sql } from 'drizzle-orm';
-import { type DB } from '../db/client';
+import { closeDb, openDb, type DB } from '../db/client';
 import { repo, repoTrending } from '../db/schema';
 import { computePeriodDate } from '../scrape/period-date';
+import { scrapeTrending } from '../scrape/trending';
 import { type ParsedRow, type Period, PERIODS } from '../types';
 
 export interface BatchInput {
@@ -99,4 +102,54 @@ export function writeBatch(db: DB, batch: BatchInput): void {
       }
     }
   });
+}
+
+export interface RunFetchOptions {
+  dbPath: string;
+  periods: Period[];
+  dryRun: boolean;
+}
+
+/** 一次完整 fetch 流程:scrape × N → writeBatch(若非 dry-run) */
+export async function runFetch(opts: RunFetchOptions): Promise<void> {
+  const { dbPath, periods, dryRun } = opts;
+  const now = Math.floor(Date.now() / 1000);
+
+  const parsed: Record<Period, ParsedRow[]> = {
+    daily: [],
+    weekly: [],
+    monthly: [],
+  };
+
+  for (let i = 0; i < periods.length; i++) {
+    const period = periods[i]!;
+    if (i > 0) await new Promise((r) => setTimeout(r, 1000));
+    const rows = await scrapeTrending(period);
+    parsed[period] = rows;
+    console.log(`✓ ${period.padEnd(7)} ${rows.length} rows`);
+  }
+
+  if (dryRun) {
+    for (const p of periods) {
+      console.error(`--- dry-run ${p} (${parsed[p].length} rows) ---`);
+      for (const r of parsed[p]) {
+        console.error(
+          `${String(r.rank).padStart(2)} +${r.today_star} ${r.full_name}`,
+        );
+      }
+    }
+    console.log('→ dry-run, nothing written');
+    return;
+  }
+
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = openDb(dbPath);
+  try {
+    writeBatch(db, { now, parsed });
+  } finally {
+    closeDb(db);
+  }
+
+  const total = periods.reduce((s, p) => s + parsed[p].length, 0);
+  console.log(`→ wrote ${total} trending rows to ${dbPath}`);
 }
